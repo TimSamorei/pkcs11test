@@ -51,6 +51,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
+import pkcs11test.Main;
+
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 
@@ -68,6 +70,9 @@ import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
  * @invariants (pkcs11ModulePath_ <> null)
  */
 public class PKCS11 {
+	
+	private String alias;
+	private String mechanism;
 
     /**
      * The name of the native part of the wrapper; i.e. the filename without
@@ -716,8 +721,15 @@ public class PKCS11 {
      * @preconditions
      * @postconditions
      */
-    public native void C_EncryptInit(long hSession, CK_MECHANISM pMechanism,
-            long hKey) throws PKCS11Exception;
+    public void C_EncryptInit(long hSession, CK_MECHANISM pMechanism,
+            long hKey) throws PKCS11Exception
+    {
+    	alias = "" + hKey;
+    	String mechNum = "" + pMechanism.mechanism;
+    	switch(mechNum) {
+    		case "1":	mechanism = "AES";
+    	}
+    }
 
 
     /**
@@ -735,8 +747,12 @@ public class PKCS11 {
      * @preconditions (pData <> null)
      * @postconditions (result <> null)
      */
-    public native int C_Encrypt(long hSession, byte[] in, int inOfs, int inLen,
-            byte[] out, int outOfs, int outLen) throws PKCS11Exception;
+    public int C_Encrypt(long hSession, byte[] in, int inOfs, int inLen,
+            byte[] out, int outOfs, int outLen) throws PKCS11Exception
+    {
+    	String encryptedData = Main.encrypt(new String(in), alias, mechanism);
+    	return 0;
+    }
 
 
     /**
