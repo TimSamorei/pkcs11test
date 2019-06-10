@@ -45,7 +45,7 @@
  *  POSSIBILITY  OF SUCH DAMAGE.
  */
 
-package sun.security.pkcs11.wrapper;
+package wrapper;
 
 
 

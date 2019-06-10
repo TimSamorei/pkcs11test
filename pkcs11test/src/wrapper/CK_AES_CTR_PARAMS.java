@@ -23,7 +23,7 @@
  * questions.
  */
 
-package sun.security.pkcs11.wrapper;
+package wrapper;
 
 /**
  * This class represents the necessary parameters required by

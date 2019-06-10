@@ -45,11 +45,12 @@
  *  POSSIBILITY  OF SUCH DAMAGE.
  */
 
-package sun.security.pkcs11.wrapper;
+package wrapper;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 import pkcs11test.Main;
 
@@ -71,8 +72,12 @@ import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
  */
 public class PKCS11 {
 	
-	private String alias;
-	private String mechanism;
+	Map<Long, SessionArgs> openSessions = 
+			new HashMap<Long, SessionArgs>();
+	
+	Map<Long, KeyObject> keyBase = 
+			new HashMap<Long, KeyObject>();
+
 
     /**
      * The name of the native part of the wrapper; i.e. the filename without
@@ -80,7 +85,7 @@ public class PKCS11 {
      */
     private static final String PKCS11_WRAPPER = "j2pkcs11";
 
-    static {
+   /* static {
         // cannot use LoadLibraryAction because that would make the native
         // library available to the bootclassloader, but we run in the
         // extension classloader.
@@ -97,13 +102,13 @@ public class PKCS11 {
         // dummy method that can be called to make sure the native
         // portion has been loaded. actual loading happens in the
         // static initializer, hence this method is empty.
-    }
+    }*/
 
     /**
      * The PKCS#11 module to connect to. This is the PKCS#11 driver of the token;
      * e.g. pk2priv.dll.
      */
-    private final String pkcs11ModulePath;
+   // private final String pkcs11ModulePath;
 
     private long pNativeData;
 
@@ -138,7 +143,7 @@ public class PKCS11 {
      * @preconditions (pkcs11ModulePath <> null)
      * @postconditions
      */
-    PKCS11(String pkcs11ModulePath, String functionListName)
+    /*PKCS11(String pkcs11ModulePath, String functionListName)
             throws IOException {
         connect(pkcs11ModulePath, functionListName);
         this.pkcs11ModulePath = pkcs11ModulePath;
@@ -171,8 +176,12 @@ public class PKCS11 {
             moduleMap.put(pkcs11ModulePath, pkcs11);
         }
         return pkcs11;
-    }
+    }*/
 
+    public static synchronized PKCS11 getInstance() {
+    	return new PKCS11();
+    }
+    
     /**
      * Connects this object to the specified PKCS#11 library. This method is for
      * internal use only.
@@ -411,8 +420,13 @@ public class PKCS11 {
      * @preconditions
      * @postconditions
      */
-    public native long C_OpenSession(long slotID, long flags,
-            Object pApplication, CK_NOTIFY Notify) throws PKCS11Exception;
+    public CK_RV C_OpenSession(long slotID, long flags,
+            Object pApplication, CK_NOTIFY Notify, AtomicLong phSession) throws PKCS11Exception
+    {
+    	phSession.set((long)((Math.random()) * (Long.MAX_VALUE) + 1));
+    	openSessions.put(phSession.get(), new SessionArgs());
+    	return CK_RV.CKR_OK;
+    }
 
 
     /**
@@ -426,7 +440,14 @@ public class PKCS11 {
      * @preconditions
      * @postconditions
      */
-    public native void C_CloseSession(long hSession) throws PKCS11Exception;
+    public CK_RV C_CloseSession(long hSession) throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
+    	}
+    	openSessions.remove(hSession);
+    	return CK_RV.CKR_OK;
+    }
 
 
     /**
@@ -439,7 +460,11 @@ public class PKCS11 {
      * @preconditions
      * @postconditions
      */
-//    public native void C_CloseAllSessions(long slotID) throws PKCS11Exception;
+    public void C_CloseAllSessions(long slotID) throws PKCS11Exception
+    {
+    	openSessions.clear();
+    	return;
+    }
 
 
     /**
@@ -722,13 +747,19 @@ public class PKCS11 {
      * @postconditions
      */
     public void C_EncryptInit(long hSession, CK_MECHANISM pMechanism,
-            long hKey) throws PKCS11Exception
+    		long hKey) throws PKCS11Exception
     {
-    	alias = "" + hKey;
-    	String mechNum = "" + pMechanism.mechanism;
-    	switch(mechNum) {
-    		case "1":	mechanism = "AES";
+    	if (!openSessions.containsKey(hSession)) {
+    		return;
     	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	if (args.getKey() != null) {
+        	return;
+        }
+       	
+        args.setKey(new AtomicLong(hKey));
+        args.setMechanism(new AtomicLong(pMechanism.mechanism));
     }
 
 
@@ -747,11 +778,36 @@ public class PKCS11 {
      * @preconditions (pData <> null)
      * @postconditions (result <> null)
      */
-    public int C_Encrypt(long hSession, byte[] in, int inOfs, int inLen,
-            byte[] out, int outOfs, int outLen) throws PKCS11Exception
+    public CK_RV C_Encrypt(long hSession, byte[] in, long inLen,
+            byte[] out, AtomicLong outLen) throws PKCS11Exception
     {
-    	String encryptedData = Main.encrypt(new String(in), alias, mechanism);
-    	return 0;
+    	if (!openSessions.containsKey(hSession)) {
+    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	if (args.isEncUpdateCalled()) {
+    		args.setKey(null);
+    		args.setMechanism(null);
+    		return CK_RV.CKR_FUNCTION_FAILED;
+    	}
+    	
+    	try {
+    		args.setEncbuffer(Main.mockEncryption(in, args.getKey().get(), args.getMechanism().get()));
+    		for (int i = 0; i < args.getEncbuffer().length; i++)
+    			out[i] = args.getEncbuffer()[i];
+    		outLen.set(args.getEncbuffer().length); 
+    		args.setKey(null);
+    		args.setMechanism(null);
+    	} catch (ArrayIndexOutOfBoundsException e) {
+    		for (int i = 0; i < out.length; i++)
+    			out[i] = in[i];
+    		outLen.set(args.getEncbuffer().length);
+    		return CK_RV.CKR_BUFFER_TOO_SMALL;
+    	} catch (NullPointerException e) {
+    		return CK_RV.CKR_FUNCTION_FAILED;
+    	}
+        return CK_RV.CKR_OK;
     }
 
 
@@ -771,9 +827,31 @@ public class PKCS11 {
      * @preconditions (pPart <> null)
      * @postconditions
      */
-    public native int C_EncryptUpdate(long hSession, long directIn, byte[] in,
-            int inOfs, int inLen, long directOut, byte[] out, int outOfs,
-            int outLen) throws PKCS11Exception;
+    public CK_RV C_EncryptUpdate(long hSession, byte[] in, long inLen, 
+    		byte[] out, AtomicLong outLen) throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	args.setEncUpdateCalled(true);
+    	
+    	try {
+    		args.setEncbuffer(Main.mockEncryption(in, args.getKey().get(), args.getKey().get()));
+    		for (int i = 0; i < args.getEncbuffer().length; i++)
+    			out[i] = args.getEncbuffer()[i];
+    		outLen.set(args.getEncbuffer().length); 
+    	} catch (ArrayIndexOutOfBoundsException e) {
+    		for (int i = 0; i < out.length; i++)
+    			out[i] = in[i];
+    		outLen.set(args.getEncbuffer().length);
+    		return CK_RV.CKR_BUFFER_TOO_SMALL;
+    	} catch (NullPointerException e) {
+    		return CK_RV.CKR_FUNCTION_FAILED;
+    	}
+        return CK_RV.CKR_OK;
+    }
 
 
     /**
@@ -790,8 +868,29 @@ public class PKCS11 {
      * @preconditions
      * @postconditions (result <> null)
      */
-    public native int C_EncryptFinal(long hSession, long directOut, byte[] out,
-            int outOfs, int outLen) throws PKCS11Exception;
+    public CK_RV C_EncryptFinal(long hSession, byte[] out, AtomicLong outLen) 
+    		throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	try {
+    		for (int i = 0; i < args.getEncbuffer().length; i++)
+    			out[i] = args.getEncbuffer()[i];
+    		outLen.set(args.getEncbuffer().length);
+    		args.setKey(null);
+    		args.setMechanism(null);
+    		args.setEncUpdateCalled(false);
+    	} catch (ArrayIndexOutOfBoundsException e) {
+    		outLen.set(args.getEncbuffer().length);
+    		return CK_RV.CKR_BUFFER_TOO_SMALL;
+    	} catch (NullPointerException e) {
+    		return CK_RV.CKR_FUNCTION_FAILED;
+    	}
+    	return CK_RV.CKR_OK;
+    }
 
 
     /**
@@ -808,8 +907,21 @@ public class PKCS11 {
      * @preconditions
      * @postconditions
      */
-    public native void C_DecryptInit(long hSession, CK_MECHANISM pMechanism,
-            long hKey) throws PKCS11Exception;
+    public void C_DecryptInit(long hSession, CK_MECHANISM pMechanism,
+            long hKey) throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	if (args.getKey() != null) {
+        	return;
+        }
+       	
+        args.setKey(new AtomicLong(hKey));
+        args.setMechanism(new AtomicLong(pMechanism.mechanism));
+    }
 
 
     /**
@@ -828,8 +940,37 @@ public class PKCS11 {
      * @preconditions (pEncryptedPart <> null)
      * @postconditions (result <> null)
      */
-    public native int C_Decrypt(long hSession, byte[] in, int inOfs, int inLen,
-            byte[] out, int outOfs, int outLen) throws PKCS11Exception;
+    public CK_RV C_Decrypt(long hSession, byte[] in, long inLen,
+            byte[] out, AtomicLong outLen) throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	if (args.isDecUpdateCalled()) {
+    		args.setKey(null);
+    		args.setMechanism(null);
+    		return CK_RV.CKR_FUNCTION_FAILED;
+    	}
+    	
+    	try {
+    		args.setDecbuffer(Main.mockDecryption(in, args.getKey().get(), args.getMechanism().get()));
+    		for (int i = 0; i < args.getDecbuffer().length; i++)
+    			out[i] = args.getDecbuffer()[i];
+    		outLen.set(args.getDecbuffer().length); 
+    		args.setKey(null);
+    		args.setMechanism(null);
+    	} catch (ArrayIndexOutOfBoundsException e) {
+    		for (int i = 0; i < out.length; i++)
+    			out[i] = in[i];
+    		outLen.set(args.getDecbuffer().length);
+    		return CK_RV.CKR_BUFFER_TOO_SMALL;
+    	} catch (NullPointerException e) {
+    		return CK_RV.CKR_FUNCTION_FAILED;
+    	}
+        return CK_RV.CKR_OK;
+    }
 
 
     /**
@@ -849,9 +990,31 @@ public class PKCS11 {
      * @preconditions (pEncryptedPart <> null)
      * @postconditions
      */
-    public native int C_DecryptUpdate(long hSession, long directIn, byte[] in,
-            int inOfs, int inLen, long directOut, byte[] out, int outOfs,
-            int outLen) throws PKCS11Exception;
+    public CK_RV C_DecryptUpdate(long hSession, byte[] in, 
+    		long inLen, byte[] out, AtomicLong outLen) throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	args.setDecUpdateCalled(true);
+    	
+    	try {
+    		args.setDecbuffer(Main.mockDecryption(in, args.getKey().get(), args.getKey().get()));
+    		for (int i = 0; i < args.getDecbuffer().length; i++)
+    			out[i] = args.getDecbuffer()[i];
+    		outLen.set(args.getDecbuffer().length); 
+    	} catch (ArrayIndexOutOfBoundsException e) {
+    		for (int i = 0; i < out.length; i++)
+    			out[i] = in[i];
+    		outLen.set(args.getDecbuffer().length);
+    		return CK_RV.CKR_BUFFER_TOO_SMALL;
+    	} catch (NullPointerException e) {
+    		return CK_RV.CKR_FUNCTION_FAILED;
+    	}
+        return CK_RV.CKR_OK;
+    }
 
 
     /**
@@ -868,8 +1031,29 @@ public class PKCS11 {
      * @preconditions
      * @postconditions (result <> null)
      */
-    public native int C_DecryptFinal(long hSession, long directOut, byte[] out,
-            int outOfs, int outLen) throws PKCS11Exception;
+    public CK_RV C_DecryptFinal(long hSession, byte[] out, AtomicLong outLen) 
+    		throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	try {
+    		for (int i = 0; i < args.getDecbuffer().length; i++)
+    			out[i] = args.getDecbuffer()[i];
+    		outLen.set(args.getDecbuffer().length);
+    		args.setKey(null);
+    		args.setMechanism(null);
+    		args.setDecUpdateCalled(false);
+    	} catch (ArrayIndexOutOfBoundsException e) {
+    		outLen.set(args.getDecbuffer().length);
+    		return CK_RV.CKR_BUFFER_TOO_SMALL;
+    	} catch (NullPointerException e) {
+    		return CK_RV.CKR_FUNCTION_FAILED;
+    	}
+    	return CK_RV.CKR_OK;
+    }
 
 
 
@@ -1321,8 +1505,24 @@ public class PKCS11 {
      * @preconditions
      * @postconditions
      */
-    public native long C_GenerateKey(long hSession, CK_MECHANISM pMechanism,
-            CK_ATTRIBUTE[] pTemplate) throws PKCS11Exception;
+    public CK_RV C_GenerateKey(long hSession, CK_MECHANISM pMechanism,
+            CK_ATTRIBUTE[] pTemplate, long ulCount, AtomicLong phKey) throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	KeyObject key = Main.mockGenerateKey(hSession, pTemplate);
+    	if (key == null) {
+    		return CK_RV.CKR_TEMPLATE_INCONSISTENT;
+    	}
+    	
+    	phKey.set((long)((Math.random()) * (Long.MAX_VALUE) + 1));
+    	keyBase.put(phKey.get(), key);
+    	
+    	return CK_RV.CKR_OK;
+    }
 
 
     /**
@@ -1351,9 +1551,29 @@ public class PKCS11 {
      * @preconditions (pMechanism <> null)
      * @postconditions (result <> null) and (result.length == 2)
      */
-    public native long[] C_GenerateKeyPair(long hSession,
+    public CK_RV C_GenerateKeyPair(long hSession,
             CK_MECHANISM pMechanism, CK_ATTRIBUTE[] pPublicKeyTemplate,
-            CK_ATTRIBUTE[] pPrivateKeyTemplate) throws PKCS11Exception;
+            CK_ATTRIBUTE[] pPrivateKeyTemplate, AtomicLong phPublicKey, 
+            AtomicLong phPrivateKey) throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	KeyObject[] keys = Main.mockGenerateKeyPair(hSession, pPublicKeyTemplate, pPrivateKeyTemplate);
+    	if (keys[0] == null || keys[1] == null) {
+    		return CK_RV.CKR_TEMPLATE_INCONSISTENT;
+    	}
+    	
+    	phPublicKey.set((long)((Math.random()) * (Long.MAX_VALUE) + 1));
+    	keyBase.put(phPublicKey.get(), keys[0]);
+    	
+    	phPrivateKey.set((long)((Math.random()) * (Long.MAX_VALUE) + 1));
+    	keyBase.put(phPrivateKey.get(), keys[1]);
+    	
+    	return CK_RV.CKR_OK;
+    }
 
 
 
@@ -1533,9 +1753,9 @@ public class PKCS11 {
      *
      * @return The string representation of object
      */
-    public String toString() {
-        return "Module name: " + pkcs11ModulePath;
-    }
+   // public String toString() {
+    //    return "Module name: " + pkcs11ModulePath;
+   // }
 
     /**
      * Calls disconnect() to cleanup the native part of the wrapper. Once this
@@ -1547,294 +1767,4 @@ public class PKCS11 {
     protected void finalize() throws Throwable {
         disconnect();
     }
-
-// PKCS11 subclass that has all methods synchronized and delegating to the
-// parent. Used for tokens that only support single threaded access
-static class SynchronizedPKCS11 extends PKCS11 {
-
-    SynchronizedPKCS11(String pkcs11ModulePath, String functionListName)
-            throws IOException {
-        super(pkcs11ModulePath, functionListName);
-    }
-
-    synchronized void C_Initialize(Object pInitArgs) throws PKCS11Exception {
-        super.C_Initialize(pInitArgs);
-    }
-
-    public synchronized void C_Finalize(Object pReserved)
-            throws PKCS11Exception {
-        super.C_Finalize(pReserved);
-    }
-
-    public synchronized CK_INFO C_GetInfo() throws PKCS11Exception {
-        return super.C_GetInfo();
-    }
-
-    public synchronized long[] C_GetSlotList(boolean tokenPresent)
-            throws PKCS11Exception {
-        return super.C_GetSlotList(tokenPresent);
-    }
-
-    public synchronized CK_SLOT_INFO C_GetSlotInfo(long slotID)
-            throws PKCS11Exception {
-        return super.C_GetSlotInfo(slotID);
-    }
-
-    public synchronized CK_TOKEN_INFO C_GetTokenInfo(long slotID)
-            throws PKCS11Exception {
-        return super.C_GetTokenInfo(slotID);
-    }
-
-    public synchronized long[] C_GetMechanismList(long slotID)
-            throws PKCS11Exception {
-        return super.C_GetMechanismList(slotID);
-    }
-
-    public synchronized CK_MECHANISM_INFO C_GetMechanismInfo(long slotID,
-            long type) throws PKCS11Exception {
-        return super.C_GetMechanismInfo(slotID, type);
-    }
-
-    public synchronized long C_OpenSession(long slotID, long flags,
-            Object pApplication, CK_NOTIFY Notify) throws PKCS11Exception {
-        return super.C_OpenSession(slotID, flags, pApplication, Notify);
-    }
-
-    public synchronized void C_CloseSession(long hSession)
-            throws PKCS11Exception {
-        super.C_CloseSession(hSession);
-    }
-
-    public synchronized CK_SESSION_INFO C_GetSessionInfo(long hSession)
-            throws PKCS11Exception {
-        return super.C_GetSessionInfo(hSession);
-    }
-
-    public synchronized void C_Login(long hSession, long userType, char[] pPin)
-            throws PKCS11Exception {
-        super.C_Login(hSession, userType, pPin);
-    }
-
-    public synchronized void C_Logout(long hSession) throws PKCS11Exception {
-        super.C_Logout(hSession);
-    }
-
-    public synchronized long C_CreateObject(long hSession,
-            CK_ATTRIBUTE[] pTemplate) throws PKCS11Exception {
-        return super.C_CreateObject(hSession, pTemplate);
-    }
-
-    public synchronized long C_CopyObject(long hSession, long hObject,
-            CK_ATTRIBUTE[] pTemplate) throws PKCS11Exception {
-        return super.C_CopyObject(hSession, hObject, pTemplate);
-    }
-
-    public synchronized void C_DestroyObject(long hSession, long hObject)
-            throws PKCS11Exception {
-        super.C_DestroyObject(hSession, hObject);
-    }
-
-    public synchronized void C_GetAttributeValue(long hSession, long hObject,
-            CK_ATTRIBUTE[] pTemplate) throws PKCS11Exception {
-        super.C_GetAttributeValue(hSession, hObject, pTemplate);
-    }
-
-    public synchronized void C_SetAttributeValue(long hSession, long hObject,
-            CK_ATTRIBUTE[] pTemplate) throws PKCS11Exception {
-        super.C_SetAttributeValue(hSession, hObject, pTemplate);
-    }
-
-    public synchronized void C_FindObjectsInit(long hSession,
-            CK_ATTRIBUTE[] pTemplate) throws PKCS11Exception {
-        super.C_FindObjectsInit(hSession, pTemplate);
-    }
-
-    public synchronized long[] C_FindObjects(long hSession,
-            long ulMaxObjectCount) throws PKCS11Exception {
-        return super.C_FindObjects(hSession, ulMaxObjectCount);
-    }
-
-    public synchronized void C_FindObjectsFinal(long hSession)
-            throws PKCS11Exception {
-        super.C_FindObjectsFinal(hSession);
-    }
-
-    public synchronized void C_EncryptInit(long hSession,
-            CK_MECHANISM pMechanism, long hKey) throws PKCS11Exception {
-        super.C_EncryptInit(hSession, pMechanism, hKey);
-    }
-
-    public synchronized int C_Encrypt(long hSession, byte[] in, int inOfs,
-            int inLen, byte[] out, int outOfs, int outLen)
-            throws PKCS11Exception {
-        return super.C_Encrypt(hSession, in, inOfs, inLen, out, outOfs, outLen);
-    }
-
-    public synchronized int C_EncryptUpdate(long hSession, long directIn,
-            byte[] in, int inOfs, int inLen, long directOut, byte[] out,
-            int outOfs, int outLen) throws PKCS11Exception {
-        return super.C_EncryptUpdate(hSession, directIn, in, inOfs, inLen,
-                directOut, out, outOfs, outLen);
-    }
-
-    public synchronized int C_EncryptFinal(long hSession, long directOut,
-            byte[] out, int outOfs, int outLen) throws PKCS11Exception {
-        return super.C_EncryptFinal(hSession, directOut, out, outOfs, outLen);
-    }
-
-    public synchronized void C_DecryptInit(long hSession,
-            CK_MECHANISM pMechanism, long hKey) throws PKCS11Exception {
-        super.C_DecryptInit(hSession, pMechanism, hKey);
-    }
-
-    public synchronized int C_Decrypt(long hSession, byte[] in, int inOfs,
-            int inLen, byte[] out, int outOfs, int outLen)
-            throws PKCS11Exception {
-        return super.C_Decrypt(hSession, in, inOfs, inLen, out, outOfs, outLen);
-    }
-
-    public synchronized int C_DecryptUpdate(long hSession, long directIn,
-            byte[] in, int inOfs, int inLen, long directOut, byte[] out,
-            int outOfs, int outLen) throws PKCS11Exception {
-        return super.C_DecryptUpdate(hSession, directIn, in, inOfs, inLen,
-                directOut, out, outOfs, outLen);
-    }
-
-    public synchronized int C_DecryptFinal(long hSession, long directOut,
-            byte[] out, int outOfs, int outLen) throws PKCS11Exception {
-        return super.C_DecryptFinal(hSession, directOut, out, outOfs, outLen);
-    }
-
-    public synchronized void C_DigestInit(long hSession, CK_MECHANISM pMechanism)
-            throws PKCS11Exception {
-        super.C_DigestInit(hSession, pMechanism);
-    }
-
-    public synchronized int C_DigestSingle(long hSession,
-            CK_MECHANISM pMechanism, byte[] in, int inOfs, int inLen,
-            byte[] digest, int digestOfs, int digestLen) throws PKCS11Exception {
-        return super.C_DigestSingle(hSession, pMechanism, in, inOfs, inLen,
-                digest, digestOfs, digestLen);
-    }
-
-    public synchronized void C_DigestUpdate(long hSession, long directIn,
-            byte[] in, int inOfs, int inLen) throws PKCS11Exception {
-        super.C_DigestUpdate(hSession, directIn, in, inOfs, inLen);
-    }
-
-    public synchronized void C_DigestKey(long hSession, long hKey)
-            throws PKCS11Exception {
-        super.C_DigestKey(hSession, hKey);
-    }
-
-    public synchronized int C_DigestFinal(long hSession, byte[] pDigest,
-            int digestOfs, int digestLen) throws PKCS11Exception {
-        return super.C_DigestFinal(hSession, pDigest, digestOfs, digestLen);
-    }
-
-    public synchronized void C_SignInit(long hSession, CK_MECHANISM pMechanism,
-            long hKey) throws PKCS11Exception {
-        super.C_SignInit(hSession, pMechanism, hKey);
-    }
-
-    public synchronized byte[] C_Sign(long hSession, byte[] pData)
-            throws PKCS11Exception {
-        return super.C_Sign(hSession, pData);
-    }
-
-    public synchronized void C_SignUpdate(long hSession, long directIn,
-            byte[] in, int inOfs, int inLen) throws PKCS11Exception {
-        super.C_SignUpdate(hSession, directIn, in, inOfs, inLen);
-    }
-
-    public synchronized byte[] C_SignFinal(long hSession, int expectedLen)
-            throws PKCS11Exception {
-        return super.C_SignFinal(hSession, expectedLen);
-    }
-
-    public synchronized void C_SignRecoverInit(long hSession,
-            CK_MECHANISM pMechanism, long hKey) throws PKCS11Exception {
-        super.C_SignRecoverInit(hSession, pMechanism, hKey);
-    }
-
-    public synchronized int C_SignRecover(long hSession, byte[] in, int inOfs,
-            int inLen, byte[] out, int outOufs, int outLen)
-            throws PKCS11Exception {
-        return super.C_SignRecover(hSession, in, inOfs, inLen, out, outOufs,
-                outLen);
-    }
-
-    public synchronized void C_VerifyInit(long hSession, CK_MECHANISM pMechanism,
-            long hKey) throws PKCS11Exception {
-        super.C_VerifyInit(hSession, pMechanism, hKey);
-    }
-
-    public synchronized void C_Verify(long hSession, byte[] pData,
-            byte[] pSignature) throws PKCS11Exception {
-        super.C_Verify(hSession, pData, pSignature);
-    }
-
-    public synchronized void C_VerifyUpdate(long hSession, long directIn,
-            byte[] in, int inOfs, int inLen) throws PKCS11Exception {
-        super.C_VerifyUpdate(hSession, directIn, in, inOfs, inLen);
-    }
-
-    public synchronized void C_VerifyFinal(long hSession, byte[] pSignature)
-            throws PKCS11Exception {
-        super.C_VerifyFinal(hSession, pSignature);
-    }
-
-    public synchronized void C_VerifyRecoverInit(long hSession,
-            CK_MECHANISM pMechanism, long hKey) throws PKCS11Exception {
-        super.C_VerifyRecoverInit(hSession, pMechanism, hKey);
-    }
-
-    public synchronized int C_VerifyRecover(long hSession, byte[] in, int inOfs,
-            int inLen, byte[] out, int outOufs, int outLen)
-            throws PKCS11Exception {
-        return super.C_VerifyRecover(hSession, in, inOfs, inLen, out, outOufs,
-                outLen);
-    }
-
-    public synchronized long C_GenerateKey(long hSession,
-            CK_MECHANISM pMechanism, CK_ATTRIBUTE[] pTemplate)
-            throws PKCS11Exception {
-        return super.C_GenerateKey(hSession, pMechanism, pTemplate);
-    }
-
-    public synchronized long[] C_GenerateKeyPair(long hSession,
-            CK_MECHANISM pMechanism, CK_ATTRIBUTE[] pPublicKeyTemplate,
-            CK_ATTRIBUTE[] pPrivateKeyTemplate)
-            throws PKCS11Exception {
-        return super.C_GenerateKeyPair(hSession, pMechanism, pPublicKeyTemplate,
-                pPrivateKeyTemplate);
-    }
-
-    public synchronized byte[] C_WrapKey(long hSession, CK_MECHANISM pMechanism,
-            long hWrappingKey, long hKey) throws PKCS11Exception {
-        return super.C_WrapKey(hSession, pMechanism, hWrappingKey, hKey);
-    }
-
-    public synchronized long C_UnwrapKey(long hSession, CK_MECHANISM pMechanism,
-            long hUnwrappingKey, byte[] pWrappedKey, CK_ATTRIBUTE[] pTemplate)
-            throws PKCS11Exception {
-        return super.C_UnwrapKey(hSession, pMechanism, hUnwrappingKey,
-                pWrappedKey, pTemplate);
-    }
-
-    public synchronized long C_DeriveKey(long hSession, CK_MECHANISM pMechanism,
-    long hBaseKey, CK_ATTRIBUTE[] pTemplate) throws PKCS11Exception {
-        return super.C_DeriveKey(hSession, pMechanism, hBaseKey, pTemplate);
-    }
-
-    public synchronized void C_SeedRandom(long hSession, byte[] pSeed)
-            throws PKCS11Exception {
-        super.C_SeedRandom(hSession, pSeed);
-    }
-
-    public synchronized void C_GenerateRandom(long hSession, byte[] randomData)
-            throws PKCS11Exception {
-        super.C_GenerateRandom(hSession, randomData);
-    }
-}
 }

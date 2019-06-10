@@ -45,7 +45,7 @@
  *  POSSIBILITY  OF SUCH DAMAGE.
  */
 
-package sun.security.pkcs11.wrapper;
+package wrapper;
 
 /**
  * This interface holds constants of the PKCS#11 v2.11 standard.

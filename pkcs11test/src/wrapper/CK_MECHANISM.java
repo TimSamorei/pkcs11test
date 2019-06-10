@@ -45,7 +45,7 @@
  *  POSSIBILITY  OF SUCH DAMAGE.
  */
 
-package sun.security.pkcs11.wrapper;
+package wrapper;
 
 import java.math.BigInteger;
 import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
@@ -162,5 +162,6 @@ public class CK_MECHANISM {
 
         return buffer.toString() ;
     }
+    
 
 }
