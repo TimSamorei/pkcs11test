@@ -1,6 +1,7 @@
 package pkcs11test;
 
 import java.io.ByteArrayInputStream;
+import java.io.UnsupportedEncodingException;
 import java.security.Signature;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -22,6 +23,7 @@ import sun.misc.BASE64Encoder;
 import wrapper.CK_ATTRIBUTE;
 import wrapper.CK_MECHANISM;
 import wrapper.KeyObject;
+import wrapper.LongWrapper;
 import wrapper.PKCS11;
 import wrapper.PKCS11Exception;
 
@@ -35,10 +37,11 @@ public class Main {
     private final static byte INS_GETCERT = (byte) 0xB0;
     private final static byte INS_GETDATA = (byte) 0xC0;
     private final static byte INS_ENCRYPT = (byte) 0xD0;
+	private final static byte INS_DECRYPT = (byte) 0xE0;
     
     static byte[] responseData;
     static int responseLength;
-    static String request;
+    static byte[] reqData;
 	
     static CardChannel channel;
     
@@ -47,118 +50,44 @@ public class Main {
 		
 		//Data to call
 		long session;
-		long key = 12;
+		long key = 4;
 		CK_MECHANISM mechanism = new CK_MECHANISM(123);
 		
-		byte[] data = "HOUSTEN WIR HABEN EIN PROBLEM".getBytes();
+		byte[] data;
+		data = "Houston wir haben ein Problem".getBytes();
+		
 		byte[] encdata = new byte[data.length];
 		
-		AtomicLong enclength = new AtomicLong(1);
-		AtomicLong phSession = new AtomicLong(1);
-		AtomicLong phKey = new AtomicLong(1);
+		LongWrapper enclength = new LongWrapper(1);
+		LongWrapper phSession = new LongWrapper(1);
+		LongWrapper phKey = new LongWrapper(1);
 		
 		PKCS11 token = PKCS11.getInstance();
 		try {
-			// RV-Test
-			System.out.println("------ TESTING RETURNVALUES ------");
-			System.out.println("Open Session:" + token.C_OpenSession(0, 0, null, null, phSession));
+			System.out.println("Open Session: " + token.C_OpenSession(0, 0, null, null, phSession));
 			session = phSession.get();
-			
-			encdata = new byte[8];
+			System.out.println("PLAINTEXT BEFORE: " + new String(data));
 			
 			token.C_EncryptInit(session, mechanism, key);
-			System.out.println("Code:" + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
+			System.out.println("Code: " + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
 			encdata = new byte[(int) enclength.get()];
-			System.out.println("Code:" + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
-			System.out.println("Code:" + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
-			token.C_EncryptInit(session, mechanism, key);
-			System.out.println("Code:" + token.C_EncryptUpdate(session, data, (long)data.length, encdata, enclength));
-			System.out.println("Code:" + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
-			System.out.println("Code:" + token.C_EncryptUpdate(session, data, (long)data.length, encdata, enclength));
-			token.C_EncryptInit(session, mechanism, key);
-			System.out.println("Code:" + token.C_EncryptUpdate(session, data, (long)data.length, encdata, enclength));
-			System.out.println("Code:" + token.C_EncryptUpdate(session, data, (long)data.length, encdata, enclength));
-			System.out.println("Code:" + token.C_EncryptFinal(session, encdata, enclength));
+			System.out.println("Code: " + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
 			
-			System.out.println("Close Session:" + token.C_CloseSession(session));
-			
-			// ENC/DEC-Test
-			System.out.println("------ TESTING ENC/DEC ------");
-			System.out.println("Open Session:" + token.C_OpenSession(0, 0, null, null, phSession));
-			session = phSession.get();
-			
-			token.C_EncryptInit(session, mechanism, key);
-			System.out.println("Code:" + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
-			System.out.println("Enc: " + new String(encdata));
-			
+			data = new byte[encdata.length];
 			for (int i = 0; i < encdata.length; i++) data[i] = encdata[i];
+			encdata = new byte[1];
 			
 			token.C_DecryptInit(session, mechanism, key);
-			System.out.println("Code:" + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
-			System.out.println("Enc: " + new String(encdata));
-			
-			System.out.println("Close Session:" + token.C_CloseSession(session));
-			
-			// UPDATE-Test
-			System.out.println("------ TESTING UPDATE ------");
-			byte[] data1 = "DAS IST ".getBytes();
-			byte[] data2 = "DAS HAUS ".getBytes();
-			byte[] data3 = "VOM NIKOLAUS ".getBytes();
-			byte[] data4 = "UND NEBENDRAN ".getBytes();
-			byte[] data5 = "WOHNT WEIHNACHTSMANN".getBytes();
-			byte[] encdata1 = new byte[data1.length];
-			byte[] encdata2 = new byte[data2.length];
-			byte[] encdata3 = new byte[data3.length];
-			byte[] encdata4 = new byte[data4.length];
-			byte[] encdata5 = new byte[data5.length];
-			
-			System.out.println("Open Session:" + token.C_OpenSession(0, 0, null, null, phSession));
-			session = phSession.get();
-			
-			token.C_EncryptInit(session, mechanism, key);
-			System.out.println("Code:" + token.C_EncryptUpdate(session, data1, (long)data.length, encdata1, enclength));
-			System.out.println("Code:" + token.C_EncryptUpdate(session, data2, (long)data.length, encdata2, enclength));
-			System.out.println("Code:" + token.C_EncryptUpdate(session, data3, (long)data.length, encdata3, enclength));
-			System.out.println("Code:" + token.C_EncryptUpdate(session, data4, (long)data.length, encdata4, enclength));
-			System.out.println("Code:" + token.C_EncryptUpdate(session, data4, (long)data.length, encdata5, enclength));
-			System.out.println("Code:" + token.C_EncryptFinal(session, encdata5, enclength));
-			
-			System.out.println("SATZ: " + new String(data1) + new String(data2) + new String(data3) + new String(data4) + new String(data5));
-			System.out.println("SATZ: " + new String(encdata1) + new String(encdata2) + new String(encdata3) + new String(encdata4) + new String(encdata5));
-			
-			for (int i = 0; i < encdata1.length; i++) data1[i] = encdata1[i];
-			for (int i = 0; i < encdata2.length; i++) data2[i] = encdata2[i];
-			for (int i = 0; i < encdata3.length; i++) data3[i] = encdata3[i];
-			for (int i = 0; i < encdata4.length; i++) data4[i] = encdata4[i];
-			for (int i = 0; i < encdata5.length; i++) data5[i] = encdata5[i];
-			
-			token.C_DecryptInit(session, mechanism, key);
-			System.out.println("Code:" + token.C_DecryptUpdate(session, data1, (long)data.length, encdata1, enclength));
-			System.out.println("Code:" + token.C_DecryptUpdate(session, data2, (long)data.length, encdata2, enclength));
-			System.out.println("Code:" + token.C_DecryptUpdate(session, data3, (long)data.length, encdata3, enclength));
-			System.out.println("Code:" + token.C_DecryptUpdate(session, data4, (long)data.length, encdata4, enclength));
-			System.out.println("Code:" + token.C_DecryptUpdate(session, data5, (long)data.length, encdata5, enclength));
-			System.out.println("Code:" + token.C_DecryptFinal(session, encdata5, enclength));
-			
-			System.out.println("SATZ: " + new String(data1) + new String(data2) + new String(data3) + new String(data4) + new String(data5));
-			System.out.println("SATZ: " + new String(encdata1) + new String(encdata2) + new String(encdata3) + new String(encdata4) + new String(encdata5));
-			
-			System.out.println("Close Session:" + token.C_CloseSession(session));
+			System.out.println("Code: " + token.C_Decrypt(session, data, (long)data.length, encdata, enclength));
+			encdata = new byte[(int) enclength.get()];
+			System.out.println("Code: " + token.C_Decrypt(session, data, (long)data.length, encdata, enclength));
 			
 			
-			
-			//KEY-Test
-			System.out.println("------ TESTING KEYGEN ------");
-			System.out.println("Open Session:" + token.C_OpenSession(0, 0, null, null, phSession));
-			session = phSession.get();
-			
-			System.out.println("Creating Key:" + token.C_GenerateKey(session, mechanism, null, 0, phKey));
-			key = phKey.get();
-			
-			token.C_EncryptInit(session, mechanism, key);
-			System.out.println("Code:" + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
-			
-			System.out.println("Close Session:" + token.C_CloseSession(session));
+			System.out.println("Close Session: " + token.C_CloseSession(session));
+			System.out.println("--- RESULTS ---");
+			System.out.println("PLAINTEXT AFTER: " + new String(encdata));
+			System.out.println("ENCRYPTEDTEXT: " + new String(data));
+			System.out.println("ENCRYPTEDHEX: " + toHex(data));
 			
 			
 		} catch (PKCS11Exception e) {
@@ -168,16 +97,17 @@ public class Main {
 	}
 	
 	
+	
+	
 	private static void getData(byte[] destination, String dataType, int dataLength) {
 		try {
 		int counter = 0;
 		CommandAPDU cmd;
 		ResponseAPDU response;
 		byte[] data;
-		String request;
 		while (responseLength > 200) {
-			request = dataType + "#" + "200" + "#" + counter;
-			cmd = new CommandAPDU(PKI_APPLET_CLA, INS_GETDATA, 0x00, 0x00, request.getBytes("ASCII"));
+			reqData = packReqData(dataType.getBytes(), "200".getBytes(), ("" +counter).getBytes());
+			cmd = new CommandAPDU(PKI_APPLET_CLA, INS_GETDATA, 0x00, 0x00, reqData);
 			response = transmit(channel, cmd);
 			checkSW(response);
 			data = response.getData();
@@ -185,8 +115,8 @@ public class Main {
 			responseLength = responseLength - 200;
 			counter++;
 		}
-		request = dataType + "#" + responseLength + "#" + counter;
-		cmd = new CommandAPDU(PKI_APPLET_CLA, INS_GETDATA, 0x00, 0x00, request.getBytes("ASCII"));
+		reqData = packReqData(dataType.getBytes(), ("" +responseLength).getBytes(), ("" +counter).getBytes());
+		cmd = new CommandAPDU(PKI_APPLET_CLA, INS_GETDATA, 0x00, 0x00, reqData);
 		response = transmit(channel, cmd);
 		checkSW(response);
 		data = response.getData();
@@ -257,27 +187,19 @@ public class Main {
     
     public static byte[] encrypt(byte[] data, long key, long mechanism) {
 		try {
-			TerminalFactory factory = TerminalFactory.getDefault();
-			CardTerminals terminals = factory.terminals();
-			if (terminals.list().isEmpty()) {
-				System.err.println("No smart card reders found. Connect reader and try again.");
-				System.exit(1);
-			}
-			System.out.println("Place phone/card on reader to start");
-			Card card = waitForCard(terminals);
-			System.out.println("Card found");
-			card.beginExclusive();
-        
+			
+			Card card = openConnection();
 			try {
-				// Select Applet
 				channel = card.getBasicChannel();
-				CommandAPDU cmd = new CommandAPDU(createSelectAidApdu(AID_ANDROID));
-				ResponseAPDU response = transmit(channel, cmd);
-				checkSW(response);
+				CommandAPDU cmd;
+				ResponseAPDU response;
+				
+				// Select Applet
+				selectApplet();
 				
 				// Send Encryption Request
-				request = data + "#" + key + "#" + mechanism;
-				cmd = new CommandAPDU(PKI_APPLET_CLA, INS_ENCRYPT, 0x00, 0x00, request.getBytes("ASCII"));
+				reqData = packReqData(data, ("" +key).getBytes(), ("" +mechanism).getBytes());
+				cmd = new CommandAPDU(PKI_APPLET_CLA, INS_ENCRYPT, 0x00, 0x00, reqData);
 				response = transmit(channel, cmd);
 				checkSW(response);
 				responseData = response.getData();
@@ -297,7 +219,73 @@ public class Main {
         }
     }
     
-    public static byte[] mockEncryption(byte[] data, long key, long mechanism) {
+    public static byte[] decrypt(byte[] data, long key, long mechanism) {
+		try {
+			
+			Card card = openConnection();
+			try {
+				channel = card.getBasicChannel();
+				CommandAPDU cmd;
+				ResponseAPDU response;
+				
+				// Select Applet
+				selectApplet();
+				
+				// Send Encryption Request
+				reqData = packReqData(data, ("" +key).getBytes(), ("" +mechanism).getBytes());
+				cmd = new CommandAPDU(PKI_APPLET_CLA, INS_DECRYPT, 0x00, 0x00, reqData);
+				response = transmit(channel, cmd);
+				checkSW(response);
+				responseData = response.getData();
+				
+				// Get Encrypted Data
+				responseLength = new Integer(new String(responseData));
+				byte[] encrypteddata = new byte[responseLength];
+				getData(encrypteddata, "decryption", responseLength);
+				
+				return encrypteddata;
+			} finally {
+                card.endExclusive();
+                card.disconnect(false);
+            }
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+        }
+    }
+    
+    private static byte[] packReqData(byte[] data1, byte[] data2, byte[] data3) {
+		byte[] ret = new byte[data1.length+data2.length+data3.length+2];
+		
+		System.arraycopy(data1, 0, ret, 0, data1.length);
+		System.arraycopy("#".getBytes(), 0, ret, data1.length, 1);
+		System.arraycopy(data2, 0, ret, data1.length+1, data2.length);
+		System.arraycopy("#".getBytes(), 0, ret, data1.length+data2.length+1, 1);
+		System.arraycopy(data3, 0, ret, data1.length+data2.length+2, data3.length);
+
+		return ret;
+	}
+
+	private static void selectApplet() throws CardException {
+    	CommandAPDU cmd = new CommandAPDU(createSelectAidApdu(AID_ANDROID));
+		ResponseAPDU response = transmit(channel, cmd);
+		checkSW(response);
+	}
+
+	private static Card openConnection() throws CardException {
+    	TerminalFactory factory = TerminalFactory.getDefault();
+		CardTerminals terminals = factory.terminals();
+		if (terminals.list().isEmpty()) {
+			System.err.println("No smart card reders found. Connect reader and try again.");
+			System.exit(1);
+		}
+		System.out.println("Place phone/card on reader to start");
+		Card card = waitForCard(terminals);
+		System.out.println("Card found");
+		card.beginExclusive();
+		return card;
+	}
+
+	public static byte[] mockEncryption(byte[] data, long key, long mechanism) {
     	byte[] returnV = new byte[data.length];
     	for (int i = 0; i < data.length; i++) {
     		returnV[i] = (byte) ((int)data[i] ^ (int)1);

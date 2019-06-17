@@ -421,7 +421,7 @@ public class PKCS11 {
      * @postconditions
      */
     public CK_RV C_OpenSession(long slotID, long flags,
-            Object pApplication, CK_NOTIFY Notify, AtomicLong phSession) throws PKCS11Exception
+            Object pApplication, CK_NOTIFY Notify, LongWrapper phSession) throws PKCS11Exception
     {
     	phSession.set((long)((Math.random()) * (Long.MAX_VALUE) + 1));
     	openSessions.put(phSession.get(), new SessionArgs());
@@ -779,7 +779,7 @@ public class PKCS11 {
      * @postconditions (result <> null)
      */
     public CK_RV C_Encrypt(long hSession, byte[] in, long inLen,
-            byte[] out, AtomicLong outLen) throws PKCS11Exception
+            byte[] out, LongWrapper outLen) throws PKCS11Exception
     {
     	if (!openSessions.containsKey(hSession)) {
     		return CK_RV.CKR_SESSION_HANDLE_INVALID;
@@ -793,7 +793,7 @@ public class PKCS11 {
     	}
     	
     	try {
-    		args.setEncbuffer(Main.mockEncryption(in, args.getKey().get(), args.getMechanism().get()));
+    		args.setEncbuffer(Main.encrypt(in, args.getKey().get(), args.getMechanism().get()));
     		for (int i = 0; i < args.getEncbuffer().length; i++)
     			out[i] = args.getEncbuffer()[i];
     		outLen.set(args.getEncbuffer().length); 
@@ -828,7 +828,7 @@ public class PKCS11 {
      * @postconditions
      */
     public CK_RV C_EncryptUpdate(long hSession, byte[] in, long inLen, 
-    		byte[] out, AtomicLong outLen) throws PKCS11Exception
+    		byte[] out, LongWrapper outLen) throws PKCS11Exception
     {
     	if (!openSessions.containsKey(hSession)) {
     		return CK_RV.CKR_SESSION_HANDLE_INVALID;
@@ -868,7 +868,7 @@ public class PKCS11 {
      * @preconditions
      * @postconditions (result <> null)
      */
-    public CK_RV C_EncryptFinal(long hSession, byte[] out, AtomicLong outLen) 
+    public CK_RV C_EncryptFinal(long hSession, byte[] out, LongWrapper outLen) 
     		throws PKCS11Exception
     {
     	if (!openSessions.containsKey(hSession)) {
@@ -941,7 +941,7 @@ public class PKCS11 {
      * @postconditions (result <> null)
      */
     public CK_RV C_Decrypt(long hSession, byte[] in, long inLen,
-            byte[] out, AtomicLong outLen) throws PKCS11Exception
+            byte[] out, LongWrapper outLen) throws PKCS11Exception
     {
     	if (!openSessions.containsKey(hSession)) {
     		return CK_RV.CKR_SESSION_HANDLE_INVALID;
@@ -955,7 +955,7 @@ public class PKCS11 {
     	}
     	
     	try {
-    		args.setDecbuffer(Main.mockDecryption(in, args.getKey().get(), args.getMechanism().get()));
+    		args.setDecbuffer(Main.decrypt(in, args.getKey().get(), args.getMechanism().get()));
     		for (int i = 0; i < args.getDecbuffer().length; i++)
     			out[i] = args.getDecbuffer()[i];
     		outLen.set(args.getDecbuffer().length); 
@@ -991,7 +991,7 @@ public class PKCS11 {
      * @postconditions
      */
     public CK_RV C_DecryptUpdate(long hSession, byte[] in, 
-    		long inLen, byte[] out, AtomicLong outLen) throws PKCS11Exception
+    		long inLen, byte[] out, LongWrapper outLen) throws PKCS11Exception
     {
     	if (!openSessions.containsKey(hSession)) {
     		return CK_RV.CKR_SESSION_HANDLE_INVALID;
@@ -1031,7 +1031,7 @@ public class PKCS11 {
      * @preconditions
      * @postconditions (result <> null)
      */
-    public CK_RV C_DecryptFinal(long hSession, byte[] out, AtomicLong outLen) 
+    public CK_RV C_DecryptFinal(long hSession, byte[] out, LongWrapper outLen) 
     		throws PKCS11Exception
     {
     	if (!openSessions.containsKey(hSession)) {
@@ -1506,7 +1506,7 @@ public class PKCS11 {
      * @postconditions
      */
     public CK_RV C_GenerateKey(long hSession, CK_MECHANISM pMechanism,
-            CK_ATTRIBUTE[] pTemplate, long ulCount, AtomicLong phKey) throws PKCS11Exception
+            CK_ATTRIBUTE[] pTemplate, long ulCount, LongWrapper phKey) throws PKCS11Exception
     {
     	if (!openSessions.containsKey(hSession)) {
     		return CK_RV.CKR_SESSION_HANDLE_INVALID;
@@ -1553,8 +1553,8 @@ public class PKCS11 {
      */
     public CK_RV C_GenerateKeyPair(long hSession,
             CK_MECHANISM pMechanism, CK_ATTRIBUTE[] pPublicKeyTemplate,
-            CK_ATTRIBUTE[] pPrivateKeyTemplate, AtomicLong phPublicKey, 
-            AtomicLong phPrivateKey) throws PKCS11Exception
+            CK_ATTRIBUTE[] pPrivateKeyTemplate, LongWrapper phPublicKey, 
+            LongWrapper phPrivateKey) throws PKCS11Exception
     {
     	if (!openSessions.containsKey(hSession)) {
     		return CK_RV.CKR_SESSION_HANDLE_INVALID;
