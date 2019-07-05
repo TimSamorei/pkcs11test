@@ -1,26 +1,27 @@
 package wrapper;
 
-import java.util.concurrent.atomic.AtomicLong;
 
 public class SessionArgs {
 	
-	private AtomicLong key = null;
-	private AtomicLong mechanism = null;
+	private LongWrapper key = null;
+	private LongWrapper mechanism = null;
 	private boolean encUpdateCalled = false;
 	private boolean decUpdateCalled = false;
+	private boolean decInit = false;
+	private boolean encInit = false;
 	private byte[] encbuffer;
 	private byte[] decbuffer;
 	
-	public AtomicLong getMechanism() {
+	public LongWrapper getMechanism() {
 		return mechanism;
 	}
-	public void setMechanism(AtomicLong mechanism) {
+	public void setMechanism(LongWrapper mechanism) {
 		this.mechanism = mechanism;
 	}
-	public AtomicLong getKey() {
+	public LongWrapper getKey() {
 		return key;
 	}
-	public void setKey(AtomicLong key) {
+	public void setKey(LongWrapper key) {
 		this.key = key;
 	}
 	public boolean isEncUpdateCalled() {
@@ -46,5 +47,17 @@ public class SessionArgs {
 	}
 	public void setDecbuffer(byte[] decbuffer) {
 		this.decbuffer = decbuffer;
+	}
+	public boolean isDecInit() {
+		return decInit;
+	}
+	public void setDecInit(boolean decInit) {
+		this.decInit = decInit;
+	}
+	public boolean isEncInit() {
+		return encInit;
+	}
+	public void setEncInit(boolean encInit) {
+		this.encInit = encInit;
 	}
 }

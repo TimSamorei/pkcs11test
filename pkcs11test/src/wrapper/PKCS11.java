@@ -52,6 +52,8 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
+import javax.smartcardio.CardException;
+
 import pkcs11test.Main;
 
 import java.security.AccessController;
@@ -423,8 +425,12 @@ public class PKCS11 {
     public CK_RV C_OpenSession(long slotID, long flags,
             Object pApplication, CK_NOTIFY Notify, LongWrapper phSession) throws PKCS11Exception
     {
-    	phSession.set((long)((Math.random()) * (Long.MAX_VALUE) + 1));
-    	openSessions.put(phSession.get(), new SessionArgs());
+    	if (openSessions.containsKey(slotID)) {
+    		return CK_RV.CKR_SESSION_PARALLEL_NOT_SUPPORTED;
+    	}
+    	Main.openConnection(slotID);
+    	phSession.set(slotID);
+    	openSessions.put(slotID, new SessionArgs());
     	return CK_RV.CKR_OK;
     }
 
@@ -442,11 +448,15 @@ public class PKCS11 {
      */
     public CK_RV C_CloseSession(long hSession) throws PKCS11Exception
     {
-    	if (!openSessions.containsKey(hSession)) {
-    		return CK_RV.CKR_SESSION_HANDLE_INVALID;
-    	}
+    	try {
+    	Main.closeConnection(hSession);
     	openSessions.remove(hSession);
     	return CK_RV.CKR_OK;
+    	} catch (CardException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	} catch (IllegalStateException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	}
     }
 
 
@@ -462,7 +472,9 @@ public class PKCS11 {
      */
     public void C_CloseAllSessions(long slotID) throws PKCS11Exception
     {
-    	openSessions.clear();
+    	for (long hSession : openSessions.keySet()) {
+    		C_CloseSession(hSession);
+    	}
     	return;
     }
 
@@ -754,15 +766,36 @@ public class PKCS11 {
     	}
     	SessionArgs args = openSessions.get(hSession);
     	
-    	if (args.getKey() != null) {
+    	if (args.isEncInit() == true) {
         	return;
         }
        	
-        args.setKey(new AtomicLong(hKey));
-        args.setMechanism(new AtomicLong(pMechanism.mechanism));
+    	try {
+			Main.init("encryption", hSession, new LongWrapper(hKey), new LongWrapper(pMechanism.mechanism));
+		} catch (IllegalStateException | IllegalArgumentException | CardException e) {
+			e.printStackTrace();
+		}
+    	args.setEncInit(true);
+        args.setKey(new LongWrapper(hKey));
+        args.setMechanism(new LongWrapper(pMechanism.mechanism));
     }
-
-
+    
+    public void C_EncryptInit(long hSession) throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	if (args.isEncInit() == true) {
+        	return;
+        }
+       		
+    	args.setEncInit(true);
+        args.setKey(null);
+        args.setMechanism(null);
+    }
+    
     /**
      * C_Encrypt encrypts single-part data.
      * (Encryption and decryption)
@@ -786,17 +819,27 @@ public class PKCS11 {
     	}
     	SessionArgs args = openSessions.get(hSession);
     	
+    	if (args.isEncInit() == false) {
+    		return CK_RV.CKR_OPERATION_NOT_INITIALIZED;
+    	}
+    	
     	if (args.isEncUpdateCalled()) {
     		args.setKey(null);
     		args.setMechanism(null);
+    		args.setEncInit(false);
     		return CK_RV.CKR_FUNCTION_FAILED;
     	}
     	
     	try {
-    		args.setEncbuffer(Main.encrypt(in, args.getKey().get(), args.getMechanism().get()));
+    		if (args.getKey() != null) {
+    			args.setEncbuffer(Main.encrypt(in, args.getKey().get(), args.getMechanism().get(), hSession));
+    		} else {
+    			args.setEncbuffer(Main.encrypt(in, 0, 0, hSession));
+    		}
     		for (int i = 0; i < args.getEncbuffer().length; i++)
     			out[i] = args.getEncbuffer()[i];
-    		outLen.set(args.getEncbuffer().length); 
+    		outLen.set(args.getEncbuffer().length);
+    		args.setEncInit(false);
     		args.setKey(null);
     		args.setMechanism(null);
     	} catch (ArrayIndexOutOfBoundsException e) {
@@ -804,8 +847,12 @@ public class PKCS11 {
     			out[i] = in[i];
     		outLen.set(args.getEncbuffer().length);
     		return CK_RV.CKR_BUFFER_TOO_SMALL;
-    	} catch (NullPointerException e) {
-    		return CK_RV.CKR_FUNCTION_FAILED;
+    	} catch (CardException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	} catch (IllegalArgumentException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	} catch (IllegalStateException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
     	}
         return CK_RV.CKR_OK;
     }
@@ -835,23 +882,32 @@ public class PKCS11 {
     	}
     	SessionArgs args = openSessions.get(hSession);
     	
+    	if (args.isEncInit() == false) {
+    		return CK_RV.CKR_OPERATION_NOT_INITIALIZED;
+    	}
+    	
     	args.setEncUpdateCalled(true);
     	
     	try {
-    		args.setEncbuffer(Main.mockEncryption(in, args.getKey().get(), args.getKey().get()));
+    		args.setEncbuffer(Main.encrypt(in, args.getKey().get(), args.getMechanism().get(), hSession));
     		for (int i = 0; i < args.getEncbuffer().length; i++)
     			out[i] = args.getEncbuffer()[i];
-    		outLen.set(args.getEncbuffer().length); 
+    		outLen.set(args.getEncbuffer().length);
     	} catch (ArrayIndexOutOfBoundsException e) {
     		for (int i = 0; i < out.length; i++)
     			out[i] = in[i];
     		outLen.set(args.getEncbuffer().length);
     		return CK_RV.CKR_BUFFER_TOO_SMALL;
-    	} catch (NullPointerException e) {
-    		return CK_RV.CKR_FUNCTION_FAILED;
+    	} catch (CardException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	} catch (IllegalArgumentException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	} catch (IllegalStateException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
     	}
         return CK_RV.CKR_OK;
     }
+
 
 
     /**
@@ -876,19 +932,11 @@ public class PKCS11 {
     	}
     	SessionArgs args = openSessions.get(hSession);
     	
-    	try {
-    		for (int i = 0; i < args.getEncbuffer().length; i++)
-    			out[i] = args.getEncbuffer()[i];
-    		outLen.set(args.getEncbuffer().length);
-    		args.setKey(null);
-    		args.setMechanism(null);
-    		args.setEncUpdateCalled(false);
-    	} catch (ArrayIndexOutOfBoundsException e) {
-    		outLen.set(args.getEncbuffer().length);
-    		return CK_RV.CKR_BUFFER_TOO_SMALL;
-    	} catch (NullPointerException e) {
-    		return CK_RV.CKR_FUNCTION_FAILED;
-    	}
+    	args.setKey(null);
+		args.setMechanism(null);
+		args.setEncUpdateCalled(false);
+		args.setEncInit(false);
+    	
     	return CK_RV.CKR_OK;
     }
 
@@ -915,14 +963,35 @@ public class PKCS11 {
     	}
     	SessionArgs args = openSessions.get(hSession);
     	
-    	if (args.getKey() != null) {
+    	if (args.isDecInit() == true) {
         	return;
         }
        	
-        args.setKey(new AtomicLong(hKey));
-        args.setMechanism(new AtomicLong(pMechanism.mechanism));
+    	try {
+			Main.init("decryption", hSession, new LongWrapper(hKey), new LongWrapper(pMechanism.mechanism));
+		} catch (IllegalStateException | IllegalArgumentException | CardException e) {
+			e.printStackTrace();
+		}
+    	args.setDecInit(true);
+        args.setKey(new LongWrapper(hKey));
+        args.setMechanism(new LongWrapper(pMechanism.mechanism));
     }
 
+    public void C_DecryptInit(long hSession) throws PKCS11Exception
+    {
+    	if (!openSessions.containsKey(hSession)) {
+    		return;
+    	}
+    	SessionArgs args = openSessions.get(hSession);
+    	
+    	if (args.isDecInit() == true) {
+        	return;
+        }
+       		
+    	args.setDecInit(true);
+        args.setKey(null);
+        args.setMechanism(null);
+    }
 
     /**
      * C_Decrypt decrypts encrypted data in a single part.
@@ -948,17 +1017,27 @@ public class PKCS11 {
     	}
     	SessionArgs args = openSessions.get(hSession);
     	
+    	if (args.isDecInit() == false) {
+    		return CK_RV.CKR_OPERATION_NOT_INITIALIZED;
+    	}
+    	
     	if (args.isDecUpdateCalled()) {
     		args.setKey(null);
     		args.setMechanism(null);
+    		args.setEncInit(false);
     		return CK_RV.CKR_FUNCTION_FAILED;
     	}
     	
     	try {
-    		args.setDecbuffer(Main.decrypt(in, args.getKey().get(), args.getMechanism().get()));
+    		if (args.getKey() != null) {
+    			args.setDecbuffer(Main.decrypt(in, args.getKey().get(), args.getMechanism().get(), hSession));
+    		} else {
+    			args.setDecbuffer(Main.decrypt(in, 0, 0, hSession));
+    		}
     		for (int i = 0; i < args.getDecbuffer().length; i++)
     			out[i] = args.getDecbuffer()[i];
-    		outLen.set(args.getDecbuffer().length); 
+    		outLen.set(args.getDecbuffer().length);
+    		args.setEncInit(false);
     		args.setKey(null);
     		args.setMechanism(null);
     	} catch (ArrayIndexOutOfBoundsException e) {
@@ -966,8 +1045,12 @@ public class PKCS11 {
     			out[i] = in[i];
     		outLen.set(args.getDecbuffer().length);
     		return CK_RV.CKR_BUFFER_TOO_SMALL;
-    	} catch (NullPointerException e) {
-    		return CK_RV.CKR_FUNCTION_FAILED;
+    	} catch (CardException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	} catch (IllegalArgumentException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	} catch (IllegalStateException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
     	}
         return CK_RV.CKR_OK;
     }
@@ -998,20 +1081,28 @@ public class PKCS11 {
     	}
     	SessionArgs args = openSessions.get(hSession);
     	
+    	if (args.isDecInit() == false) {
+    		return CK_RV.CKR_OPERATION_NOT_INITIALIZED;
+    	}
+    	
     	args.setDecUpdateCalled(true);
     	
     	try {
-    		args.setDecbuffer(Main.mockDecryption(in, args.getKey().get(), args.getKey().get()));
+    		args.setDecbuffer(Main.decrypt(in, args.getKey().get(), args.getMechanism().get(), hSession));
     		for (int i = 0; i < args.getDecbuffer().length; i++)
     			out[i] = args.getDecbuffer()[i];
-    		outLen.set(args.getDecbuffer().length); 
+    		outLen.set(args.getDecbuffer().length);
     	} catch (ArrayIndexOutOfBoundsException e) {
     		for (int i = 0; i < out.length; i++)
     			out[i] = in[i];
     		outLen.set(args.getDecbuffer().length);
     		return CK_RV.CKR_BUFFER_TOO_SMALL;
-    	} catch (NullPointerException e) {
-    		return CK_RV.CKR_FUNCTION_FAILED;
+    	} catch (CardException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	} catch (IllegalArgumentException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
+    	} catch (IllegalStateException e) {
+    		return CK_RV.CKR_FUNCTION_CANCELED;
     	}
         return CK_RV.CKR_OK;
     }
@@ -1039,19 +1130,11 @@ public class PKCS11 {
     	}
     	SessionArgs args = openSessions.get(hSession);
     	
-    	try {
-    		for (int i = 0; i < args.getDecbuffer().length; i++)
-    			out[i] = args.getDecbuffer()[i];
-    		outLen.set(args.getDecbuffer().length);
-    		args.setKey(null);
-    		args.setMechanism(null);
-    		args.setDecUpdateCalled(false);
-    	} catch (ArrayIndexOutOfBoundsException e) {
-    		outLen.set(args.getDecbuffer().length);
-    		return CK_RV.CKR_BUFFER_TOO_SMALL;
-    	} catch (NullPointerException e) {
-    		return CK_RV.CKR_FUNCTION_FAILED;
-    	}
+    	args.setKey(null);
+		args.setMechanism(null);
+		args.setDecUpdateCalled(false);
+		args.setDecInit(false);
+    	
     	return CK_RV.CKR_OK;
     }
 

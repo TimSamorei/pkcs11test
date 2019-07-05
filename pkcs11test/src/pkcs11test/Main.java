@@ -5,7 +5,9 @@ import java.io.UnsupportedEncodingException;
 import java.security.Signature;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
@@ -13,6 +15,7 @@ import javax.crypto.Cipher;
 import javax.smartcardio.Card;
 import javax.smartcardio.CardChannel;
 import javax.smartcardio.CardException;
+import javax.smartcardio.CardNotPresentException;
 import javax.smartcardio.CardTerminal;
 import javax.smartcardio.CardTerminals;
 import javax.smartcardio.CommandAPDU;
@@ -38,60 +41,61 @@ public class Main {
     private final static byte INS_GETDATA = (byte) 0xC0;
     private final static byte INS_ENCRYPT = (byte) 0xD0;
 	private final static byte INS_DECRYPT = (byte) 0xE0;
+	private final static byte INS_INIT = (byte) 0xF0;
     
     static byte[] responseData;
     static int responseLength;
     static byte[] reqData;
 	
-    static CardChannel channel;
-    
+    static CardChannel channel;  
+    static ArrayList<Card> cards = new ArrayList<Card>();
     
 	public static void main(String[] args) {
 		
 		//Data to call
-		long session;
-		long key = 4;
-		CK_MECHANISM mechanism = new CK_MECHANISM(123);
-		
-		byte[] data;
-		data = "Houston wir haben ein Problem".getBytes();
-		
-		byte[] encdata = new byte[data.length];
-		
-		LongWrapper enclength = new LongWrapper(1);
-		LongWrapper phSession = new LongWrapper(1);
-		LongWrapper phKey = new LongWrapper(1);
-		
-		PKCS11 token = PKCS11.getInstance();
-		try {
-			System.out.println("Open Session: " + token.C_OpenSession(0, 0, null, null, phSession));
-			session = phSession.get();
-			System.out.println("PLAINTEXT BEFORE: " + new String(data));
-			
-			token.C_EncryptInit(session, mechanism, key);
-			System.out.println("Code: " + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
-			encdata = new byte[(int) enclength.get()];
-			System.out.println("Code: " + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
-			
-			data = new byte[encdata.length];
-			for (int i = 0; i < encdata.length; i++) data[i] = encdata[i];
-			encdata = new byte[1];
-			
-			token.C_DecryptInit(session, mechanism, key);
-			System.out.println("Code: " + token.C_Decrypt(session, data, (long)data.length, encdata, enclength));
-			encdata = new byte[(int) enclength.get()];
-			System.out.println("Code: " + token.C_Decrypt(session, data, (long)data.length, encdata, enclength));
-			
-			
-			System.out.println("Close Session: " + token.C_CloseSession(session));
-			System.out.println("--- RESULTS ---");
-			System.out.println("PLAINTEXT AFTER: " + new String(encdata));
-			System.out.println("ENCRYPTEDTEXT: " + new String(data));
-			System.out.println("ENCRYPTEDHEX: " + toHex(data));
-			
-			
-		} catch (PKCS11Exception e) {
-			System.out.println("ERROR");
+				long session;
+				long key = 12;
+				CK_MECHANISM mechanism = new CK_MECHANISM(123);
+				
+				byte[] data;
+				data = "test".getBytes();
+				
+				byte[] encdata = new byte[data.length];
+				
+				LongWrapper enclength = new LongWrapper(1);
+				LongWrapper phSession = new LongWrapper(1);
+				LongWrapper phKey = new LongWrapper(1);
+				
+				PKCS11 token = PKCS11.getInstance();
+				try {
+					System.out.println("Open Session: " + token.C_OpenSession(0, 0, null, null, phSession));
+					session = phSession.get();
+					System.out.println("PLAINTEXT BEFORE: " + new String(data));
+					
+					token.C_EncryptInit(session, mechanism, key);
+					System.out.println("Code: " + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
+					encdata = new byte[(int) enclength.get()];
+					System.out.println("Code: " + token.C_Encrypt(session, data, (long)data.length, encdata, enclength));
+					
+					data = new byte[encdata.length];
+					for (int i = 0; i < encdata.length; i++) data[i] = encdata[i];
+					encdata = new byte[1];
+					
+					//token.C_DecryptInit(session, mechanism, key);
+					token.C_DecryptInit(session, mechanism, key);
+					System.out.println("Code: " + token.C_Decrypt(session, data, (long)data.length, encdata, enclength));
+					encdata = new byte[(int) enclength.get()];
+					System.out.println("Code: " + token.C_Decrypt(session, data, (long)data.length, encdata, enclength));
+					
+					
+					System.out.println("Close Session: " + token.C_CloseSession(session));
+					System.out.println("--- RESULTS ---");
+					System.out.println("PLAINTEXT AFTER: " + new String(encdata));
+					System.out.println("ENCRYPTEDTEXT: " + new String(data));
+					System.out.println("ENCRYPTEDHEX: " + toHex(data));
+					
+				} catch (PKCS11Exception e) {
+					System.out.println("ERROR");
 		}
 		
 	}
@@ -99,7 +103,12 @@ public class Main {
 	
 	
 	
-	private static void getData(byte[] destination, String dataType, int dataLength) {
+	
+	
+	
+	
+	private static void getData(byte[] destination, String dataType, int dataLength)
+			throws IllegalArgumentException, IllegalStateException {
 		try {
 		int counter = 0;
 		CommandAPDU cmd;
@@ -126,23 +135,10 @@ public class Main {
 		}
 	}
 
-	private static Card waitForCard(CardTerminals terminals)
-            throws CardException {
-        while (true) {
-            for (CardTerminal ct : terminals
-                    .list(CardTerminals.State.CARD_INSERTION)) {
-
-                return ct.connect("*");
-            }
-            terminals.waitForChange();
-        }
-    }
-	
     private static ResponseAPDU transmit(CardChannel channel, CommandAPDU cmd)
-            throws CardException {
+            throws CardException, IllegalArgumentException {
     	System.out.println("APDU sent: " + toHex(cmd.getBytes()));
         ResponseAPDU response = channel.transmit(cmd);
- 
         return response;
     }
     
@@ -185,72 +181,51 @@ public class Main {
         }
     }
     
-    public static byte[] encrypt(byte[] data, long key, long mechanism) {
-		try {
-			
-			Card card = openConnection();
-			try {
-				channel = card.getBasicChannel();
-				CommandAPDU cmd;
-				ResponseAPDU response;
-				
-				// Select Applet
-				selectApplet();
-				
-				// Send Encryption Request
-				reqData = packReqData(data, ("" +key).getBytes(), ("" +mechanism).getBytes());
-				cmd = new CommandAPDU(PKI_APPLET_CLA, INS_ENCRYPT, 0x00, 0x00, reqData);
-				response = transmit(channel, cmd);
-				checkSW(response);
-				responseData = response.getData();
-				
-				// Get Encrypted Data
-				responseLength = new Integer(new String(responseData));
-				byte[] encrypteddata = new byte[responseLength];
-				getData(encrypteddata, "encryption", responseLength);
-				
-				return encrypteddata;
-			} finally {
-                card.endExclusive();
-                card.disconnect(false);
-            }
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-        }
+    public static byte[] encrypt(byte[] data, long key, long mechanism, long hSession)
+    		throws CardException, IllegalStateException, IllegalArgumentException, IllegalStateException {
+    
+		Card card = cards.get((int) hSession);
+		channel = card.getBasicChannel();
+		CommandAPDU cmd;
+		ResponseAPDU response;
+		
+		// Send Encryption Request
+		reqData = packReqData(data, ("" +key).getBytes(), ("" +mechanism).getBytes());
+		cmd = new CommandAPDU(PKI_APPLET_CLA, INS_ENCRYPT, 0x00, 0x00, reqData);
+		response = transmit(channel, cmd);
+		checkSW(response);
+		responseData = response.getData();
+		
+		// Get Encrypted Data
+		responseLength = new Integer(new String(responseData));
+		byte[] encrypteddata = new byte[responseLength];
+		getData(encrypteddata, "encryption", responseLength);
+		
+		return encrypteddata;
+		
     }
     
-    public static byte[] decrypt(byte[] data, long key, long mechanism) {
-		try {
-			
-			Card card = openConnection();
-			try {
-				channel = card.getBasicChannel();
-				CommandAPDU cmd;
-				ResponseAPDU response;
-				
-				// Select Applet
-				selectApplet();
-				
-				// Send Encryption Request
-				reqData = packReqData(data, ("" +key).getBytes(), ("" +mechanism).getBytes());
-				cmd = new CommandAPDU(PKI_APPLET_CLA, INS_DECRYPT, 0x00, 0x00, reqData);
-				response = transmit(channel, cmd);
-				checkSW(response);
-				responseData = response.getData();
-				
-				// Get Encrypted Data
-				responseLength = new Integer(new String(responseData));
-				byte[] encrypteddata = new byte[responseLength];
-				getData(encrypteddata, "decryption", responseLength);
-				
-				return encrypteddata;
-			} finally {
-                card.endExclusive();
-                card.disconnect(false);
-            }
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-        }
+    public static byte[] decrypt(byte[] data, long key, long mechanism, long hSession)
+    		throws CardException, IllegalStateException, IllegalArgumentException, IllegalStateException {
+    	
+		Card card = cards.get((int) hSession);
+		channel = card.getBasicChannel();
+		CommandAPDU cmd;
+		ResponseAPDU response;
+		
+		// Send Encryption Request
+		reqData = packReqData(data, ("" +key).getBytes(), ("" +mechanism).getBytes());
+		cmd = new CommandAPDU(PKI_APPLET_CLA, INS_DECRYPT, 0x00, 0x00, reqData);
+		response = transmit(channel, cmd);
+		checkSW(response);
+		responseData = response.getData();
+		
+		// Get Encrypted Data
+		responseLength = new Integer(new String(responseData));
+		byte[] encrypteddata = new byte[responseLength];
+		getData(encrypteddata, "decryption", responseLength);
+		
+		return encrypteddata;
     }
     
     private static byte[] packReqData(byte[] data1, byte[] data2, byte[] data3) {
@@ -265,51 +240,75 @@ public class Main {
 		return ret;
 	}
 
-	private static void selectApplet() throws CardException {
+	private static void selectApplet(CardChannel channel) throws CardException {
     	CommandAPDU cmd = new CommandAPDU(createSelectAidApdu(AID_ANDROID));
 		ResponseAPDU response = transmit(channel, cmd);
 		checkSW(response);
 	}
 
-	private static Card openConnection() throws CardException {
+	public static void openConnection(long slotID) {	
     	TerminalFactory factory = TerminalFactory.getDefault();
 		CardTerminals terminals = factory.terminals();
-		if (terminals.list().isEmpty()) {
-			System.err.println("No smart card reders found. Connect reader and try again.");
-			System.exit(1);
+		try {
+			while (cards.size() < terminals.list().size()) {
+				cards.add(null);
+			}
+			if (terminals.list().isEmpty()) {
+				System.err.println("No smart card readers found. Connect reader and try again.");
+				System.exit(1);
+			}
+			System.out.println("Place phone/card on reader to start");
+			Card card = waitForCard(terminals, slotID);
+			cards.add((int) slotID, card);
+			System.out.println("Card found: " + card);
+			card.beginExclusive();
+			selectApplet(card.getBasicChannel());
+		} catch (CardException e) {
+			e.printStackTrace();
 		}
-		System.out.println("Place phone/card on reader to start");
-		Card card = waitForCard(terminals);
-		System.out.println("Card found");
-		card.beginExclusive();
-		return card;
+		return;
 	}
 
-	public static byte[] mockEncryption(byte[] data, long key, long mechanism) {
-    	byte[] returnV = new byte[data.length];
-    	for (int i = 0; i < data.length; i++) {
-    		returnV[i] = (byte) ((int)data[i] ^ (int)1);
-    	}
-    	
-    	return returnV;
-    }
-    
-    public static byte[] mockDecryption(byte[] data, long key, long mechanism) {
-    	byte[] returnV = new byte[data.length];
-    	for (int i = 0; i < data.length; i++) {
-    		returnV[i] = (byte) ((int)data[i] ^ (int)1);
-    	}
-    	
-    	return returnV;
-    }
+	private static Card waitForCard(CardTerminals terminals, long slotID) {
+		try {
+			while (true) {
+				terminals.waitForChange();
+				CardTerminal terminal = terminals.list().get((int) slotID);
+				return terminal.connect("*");
+			}
+		} catch(CardNotPresentException e) {
+			System.out.println("Wrong Terminal");
+			return waitForCard(terminals, slotID);
+		} catch (CardException e) {
+			e.printStackTrace();
+		}
+		return null;
+}
 
-	public static KeyObject mockGenerateKey(long hSession, CK_ATTRIBUTE[] pTemplate) {
-		return new KeyObject(hSession, pTemplate);
+	public static void closeConnection(long hSession) throws CardException, IllegalStateException {
+		Card card = cards.get((int) hSession);
+		try {
+			card.endExclusive();
+			card.disconnect(false);
+		} catch (CardException e) {
+			e.printStackTrace();
+		}
+		cards.set((int) hSession, null);
+		return;
 	}
 
-	public static KeyObject[] mockGenerateKeyPair(long hSession, CK_ATTRIBUTE[] pPublicKeyTemplate,
-			CK_ATTRIBUTE[] pPrivateKeyTemplate) {
-		KeyObject[] keys = {new KeyObject(hSession, pPublicKeyTemplate), new KeyObject(hSession, pPrivateKeyTemplate)};
-		return keys;
+	public static void init(String string, long hSession, LongWrapper hKey, LongWrapper mechanism)
+			throws CardException, IllegalStateException, IllegalArgumentException, IllegalStateException {
+		Card card = cards.get((int) hSession);
+		channel = card.getBasicChannel();
+		CommandAPDU cmd;
+		ResponseAPDU response;
+		
+		reqData = packReqData(string.getBytes(), ("" +hKey.get()).getBytes(), ("" +mechanism.get()).getBytes());
+		cmd = new CommandAPDU(PKI_APPLET_CLA, INS_INIT, 0x00, 0x00, reqData);
+		response = transmit(channel, cmd);
+		checkSW(response);
+		responseData = response.getData();
 	}
+
 }
